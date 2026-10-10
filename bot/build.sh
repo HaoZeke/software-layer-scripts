@@ -198,7 +198,7 @@ cat /etc/os-release > _bot_job${SLURM_JOB_ID}.os
 # Also: fetch CPU flags into an array, so that we can implement a hard check against a reference
 lscpu_flags_line=$(lscpu | grep "Flags:" || echo "")
 # strip leading "Flags:" and spaces, and put result in a bash array
-if [[ $lscpu_flags =~ Flags:\ (.*) ]]; then lscpu_flags=(${BASH_REMATCH[1]}); fi
+if [[ $lscpu_flags_line =~ Flags:\ (.*) ]]; then lscpu_flags=(${BASH_REMATCH[1]}); fi
 # for now, just print
 echo "bot/build.sh: CPU flags=${lscpu_flags[@]}"
 # TODO: an actual comparison with a reference bash array, e.g. through
