@@ -49,6 +49,29 @@ CPU_TARGET_SAPPHIRE_RAPIDS = 'x86_64/intel/sapphirerapids'
 CPU_TARGET_ZEN4 = 'x86_64/amd/zen4'
 CPU_TARGET_ZEN5 = 'x86_64/amd/zen5'
 
+# GROMACS SIMD level per x86 CPU target, as EESSI's trees are built
+GROMACS_SIMD_BY_CPU_TARGET = {
+    'x86_64/intel/haswell': 'AVX2_256',
+    'x86_64/intel/skylake_avx512': 'AVX_512',
+    'x86_64/intel/cascadelake': 'AVX_512',
+    'x86_64/intel/icelake': 'AVX_512',
+    'x86_64/intel/sapphirerapids': 'AVX_512',
+    'x86_64/amd/zen2': 'AVX2_256',
+    'x86_64/amd/zen3': 'AVX2_256',
+    'x86_64/amd/zen4': 'AVX_512',
+    'x86_64/amd/zen5': 'AVX_512',
+}
+
+# SVE vector length (bits) per aarch64 CPU target; GROMACS otherwise reads it from the build host's
+# /proc/sys/abi/sve_default_vector_length and bakes it into the build
+GROMACS_SVE_LENGTH_BY_CPU_TARGET = {
+    'aarch64/a64fx': '512',
+    'aarch64/neoverse_v1': '256',
+    'aarch64/nvidia/grace': '128',
+    'aarch64/aws/graviton4': '128',
+    'aarch64/google/axion': '128',
+}
+
 EESSI_RPATH_OVERRIDE_ATTR = 'orig_rpath_override_dirs'
 EESSI_MODULE_ONLY_ATTR = 'orig_module_only'
 EESSI_FORCE_ATTR = 'orig_force'
@@ -1866,6 +1889,29 @@ def pre_test_hook_c_ares(self, *args, **kwargs):
         raise EasyBuildError("c-ares-specific hook triggered for non-c-ares easyconfig?!")
 
 
+def pre_configure_hook_gromacs(self, *args, **kwargs):
+    """
+    Pin GROMACS' SIMD choices to the EESSI CPU target instead of letting GROMACS measure the build host.
+    For a CPU whose brand string says Intel, GROMACS picks between AVX-512 and AVX2 by timing FMA
+    loops, so the result follows the build node (one or two AVX-512 FMA units, or a different
+    microarchitecture presenting an Intel CPU) rather than the target the build is labelled for.
+    With ARM_SVE, GROMACS compiles for the SVE vector length of the build host, and a build for a
+    longer vector length than the host runs crashes; the length is set from the target instead.
+    """
+    if self.name == 'GROMACS':
+        cpu_target = get_eessi_envvar('EESSI_SOFTWARE_SUBDIR')
+        gmx_simd = GROMACS_SIMD_BY_CPU_TARGET.get(cpu_target)
+        if gmx_simd and '-DGMX_SIMD=' not in self.cfg['configopts']:
+            print_msg("Setting GMX_SIMD=%s for CPU target %s", gmx_simd, cpu_target)
+            self.cfg.update('configopts', '-DGMX_SIMD=%s' % gmx_simd)
+        sve_length = GROMACS_SVE_LENGTH_BY_CPU_TARGET.get(cpu_target)
+        if sve_length and '-DGMX_SIMD_ARM_SVE_LENGTH=' not in self.cfg['configopts']:
+            print_msg("Setting GMX_SIMD_ARM_SVE_LENGTH=%s for CPU target %s", sve_length, cpu_target)
+            self.cfg.update('configopts', '-DGMX_SIMD_ARM_SVE_LENGTH=%s' % sve_length)
+    else:
+        raise EasyBuildError("GROMACS-specific hook triggered for non-GROMACS easyconfig?!")
+
+
 def pre_test_hook_gromacs(self, *args, **kwargs):
     """
     Solve GROMACS test failure on NVIDIA Grace CPUs when hwloc support is enabled.
@@ -2558,6 +2604,7 @@ PRE_CONFIGURE_HOOKS = {
     'Extrae': pre_configure_hook_extrae,
     'GObject-Introspection': pre_configure_hook_gobject_introspection,
     'Graphviz': pre_configure_hook_graphviz,
+    'GROMACS': pre_configure_hook_gromacs,
     'GRASS': pre_configure_hook_grass,
     'LAMMPS': pre_configure_hook_LAMMPS_zen4_and_aarch64_cuda,
     'libfabric': pre_configure_hook_libfabric_disable_psm3_x86_64_generic,
