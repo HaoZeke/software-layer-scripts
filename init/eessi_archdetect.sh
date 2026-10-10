@@ -51,11 +51,18 @@ update_arch_specs(){
 
     [ ! -f "$1" ] && echo "[ERROR] update_arch_specs: spec file not found: $1" >&2 && exit 1
     local spec_file="$1"
+    # remove comments from spec file; a here-string, unlike process substitution,
+    # does not need /dev/fd, which minimal init systems and chroots may lack
+    local spec_lines
+    spec_lines=$(sed -E 's/(^|[\s\t])#.*$//g;/^\s*$/d' "$spec_file") || \
+        { echo "[ERROR] update_arch_specs: cannot read spec file: $1" >&2; exit 1; }
     while read spec_line; do
+       [ -z "$spec_line" ] && continue
        # format spec line as an array and append it to array with all CPU arch specs
        cpu_arch_spec+=("(${spec_line})")
-    # remove comments from spec file
-    done < <(sed -E 's/(^|[\s\t])#.*$//g;/^\s*$/d' "$spec_file")
+    done <<< "$spec_lines"
+    [ ${#cpu_arch_spec[@]} -gt 0 ] || \
+        { echo "[ERROR] update_arch_specs: no CPU specifications loaded from $1" >&2; exit 1; }
 }
 
 # CPU specification of host system

@@ -76,6 +76,17 @@ jobs:
               echo "Test for ${{matrix.proc_cpuinfo}} FAILED: $CPU_ARCHES" >&2
               exit 1
           fi
+          # check that detection does not depend on /dev/fd, which minimal init systems and chroots lack:
+          # run the same detection in a mount namespace with a bare /dev
+          CPU_ARCH=$(sudo --preserve-env=EESSI_MACHINE_TYPE,EESSI_PROC_CPUINFO unshare --mount bash -c '
+              mount -t tmpfs nodev /dev && mknod -m 666 /dev/null c 1 3 && test ! -e /dev/fd &&
+              ./init/eessi_archdetect.sh cpupath')
+          if [[ $CPU_ARCH == "$( cat ./tests/archdetect/${{matrix.proc_cpuinfo}}.output )" ]]; then
+              echo "Test for ${{matrix.proc_cpuinfo}} without /dev/fd PASSED: $CPU_ARCH"
+          else
+              echo "Test for ${{matrix.proc_cpuinfo}} without /dev/fd FAILED: $CPU_ARCH" >&2
+              exit 1
+          fi
           # Check all those architectures actually exist (if this EESSI version has been populated already)
           if [ -d ${EESSI_PREFIX}/software/linux ]; then
             for dir in $(echo "$CPU_ARCHES" | tr ':' '\n'); do
