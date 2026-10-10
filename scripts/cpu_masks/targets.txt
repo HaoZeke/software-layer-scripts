@@ -1,0 +1,15 @@
+# CPU targets a cpuidmask profile is generated for, with the vendor string and
+# the CPUID leaf 1 EAX signature (family, model, stepping) to present.
+# icelake, sapphirerapids and zen4 use the signature of shipping parts; the
+# others are the family, model and stepping of QEMU's CPU model of that name
+# (target/i386/cpu.c).
+#
+# subdir                      vendor        signature   source
+x86_64/intel/haswell          GenuineIntel  0x000306C4  # QEMU Haswell 6/60/4
+x86_64/intel/skylake_avx512   GenuineIntel  0x00050654  # QEMU Skylake-Server 6/85/4
+x86_64/intel/cascadelake      GenuineIntel  0x00050656  # QEMU Cascadelake-Server 6/85/6
+x86_64/intel/icelake          GenuineIntel  0x000606A6  # Ice Lake-SP 6/106/6
+x86_64/intel/sapphirerapids   GenuineIntel  0x000806F8  # Sapphire Rapids 6/143/8
+x86_64/amd/zen2               AuthenticAMD  0x00830F10  # QEMU EPYC-Rome 23/49/0
+x86_64/amd/zen3               AuthenticAMD  0x00A00F11  # QEMU EPYC-Milan 25/1/1
+x86_64/amd/zen4               AuthenticAMD  0x00A10F11  # Genoa 25/17/1

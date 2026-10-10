@@ -1,0 +1,29 @@
+# documentation: https://help.github.com/en/articles/workflow-syntax-for-github-actions
+name: Check the cpuidmask profiles against the native flags references
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+permissions:
+  contents: read # to fetch code (actions/checkout)
+jobs:
+  cpu_masks:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out software-layer-scripts repository
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Check that the profiles are generated from the current references
+        run: |
+          scripts/cpu_masks/generate_profiles.sh 14.3.0
+          git diff --exit-code scripts/cpu_masks/profiles
+
+      - name: Mount EESSI CernVM-FS repository
+        uses: eessi/github-action-eessi@v3
+        with:
+          eessi_stack_version: '2025.06'
+          use_eessi_module: false
+
+      - name: Check the targets below the runner's own under their profiles
+        run: |
+          scripts/cpu_masks/check_masked_references.sh --below-host
