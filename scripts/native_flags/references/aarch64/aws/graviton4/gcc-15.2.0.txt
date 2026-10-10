@@ -2,4 +2,4 @@
 -mno-fix-cortex-a53-843419
 -mlittle-endian
 -mabi=lp64
--mcpu=neoverse-v2+crc+sve2-aes+sve2-sha3+nopauth
+-mcpu=neoverse-v2+crc+sve2-aes+sve2-sha3+nossbs+nopauth
