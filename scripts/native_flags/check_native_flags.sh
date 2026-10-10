@@ -20,6 +20,13 @@
 # For Clang, all -target-cpu, -tune-cpu, -target-abi and -target-feature options passed to clang -cc1 are taken
 # into account.
 #
+# Some target flags depend on the kernel of the build host rather than on its CPU, and only enable intrinsics or
+# branch protection that EasyBuild's flags never use, so they don't change the generated code:
+#   aarch64 (GCC): +nossbs (hidden by the kernel's ARM64_ERRATUM_3194386 workaround on Neoverse V2 and others),
+#                  +nopauth (pointer authentication needs CONFIG_ARM64_PTR_AUTH, off in EL9 kernels, on in EL10)
+#   x86_64 (GCC): -m[no-]shstk, -m[no-]mwaitx (intrinsics only)
+# These are left out of the comparison; a difference in them is reported as a warning only.
+#
 # Requires an initialised EESSI environment (EESSI module loaded) and Lmod's module command.
 #
 # usage: check_native_flags.sh [--generate]
@@ -101,6 +108,11 @@ function clang_native_flags() {
     fi
     echo "${cc1_line}" | tr -d '"' | tr -s ' ' '\n' \
         | awk '/^-(target-cpu|tune-cpu|target-abi|target-feature)$/ { opt=$0; getline; print opt " " $0 }'
+}
+
+# Drop the target flags that depend on the kernel of the build host rather than on its CPU (see above)
+function drop_kernel_dependent_flags() {
+    sed -E -e '/^-mcpu=/s/\+no(ssbs|pauth)//g' -e '/^-m(no-)?(shstk|mwaitx)$/d'
 }
 
 # Check whether the given path is part of an installation provided by a loaded module (as opposed to a compiler
@@ -198,10 +210,16 @@ for compiler in $(echo ${!compilers[@]} | tr ' ' '\n' | sort); do
         echo_yellow "To create a reference file, simply copy the above list of flags (without indentation) into the file ${reference_file} and add that to the EESSI/software-layer-scripts repository."
         missing+=("${reference_file}")
     else
-        flags_diff=$(diff <(grep -v '^#' ${reference_file}) <(echo "${flags}"))
+        flags_diff=$(diff <(grep -v '^#' ${reference_file} | drop_kernel_dependent_flags) \
+                          <(echo "${flags}" | drop_kernel_dependent_flags))
         if [[ $? -eq 0 ]]; then
             echo_green ">> Flags for ${compiler_type} ${version} match reference (${reference_file}):"
             echo "${flags}" | sed 's/^/     /'
+            kernel_diff=$(diff <(grep -v '^#' ${reference_file}) <(echo "${flags}"))
+            if [[ $? -ne 0 ]]; then
+                echo_yellow ">> WARNING: flags that depend on the kernel of the build host differ from the reference:"
+                echo "${kernel_diff}" | sed 's/^/     /'
+            fi
         else
             echo_red ">> Flags for ${compiler_type} ${version} DO NOT MATCH reference (${reference_file})!"
             echo "   Difference ('<' = reference, '>' = this host):"
