@@ -151,6 +151,23 @@ jobs:
           check_disallowed_env_prefix EASYBUILD_
           unset EESSI_USER_INSTALL
 
+      - name: Run tests for EESSI-extend with a generic software subdirectory
+        run: |
+          source .github/workflows/scripts/test_utils.sh
+          # build for the generic subdirectory on a host that would otherwise get its own subdirectory
+          export EESSI_SOFTWARE_SUBDIR_OVERRIDE=x86_64/generic
+          init_eessi_environment --eessi-version ${{matrix.eessi_version}} --installation-path "$MY_INSTALLATION_PATH"
+          check_env_var "EESSI_SOFTWARE_SUBDIR" "x86_64/generic"
+          export EESSI_USER_INSTALL="$MY_INSTALLATION_PATH/$USER"
+          mkdir -p $EESSI_USER_INSTALL  # must exist
+          module load EESSI-extend/${{matrix.eessi_version}}-easybuild
+          check_env_var "EASYBUILD_OPTARCH" "GENERIC"
+          eb --show-config | grep -E '^optarch +\(E\) = GENERIC$'
+          # unload and check the environment is clean again
+          module unload EESSI-extend
+          check_disallowed_env_prefix EASYBUILD_
+          unset EESSI_USER_INSTALL EESSI_SOFTWARE_SUBDIR_OVERRIDE
+
       - name: Run tests for EESSI-extend in the EasyBuild hooks override scenario
         run: |
           source .github/workflows/scripts/test_utils.sh

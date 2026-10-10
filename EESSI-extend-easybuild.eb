@@ -215,6 +215,15 @@ end
 -- Make sure to use the general umask that allows a global read
 setenv ("EASYBUILD_UMASK", "022")
 
+-- A generic software subdirectory gets generic code. Without this, an install into a generic subdirectory
+-- (for example selected through $EESSI_SOFTWARE_SUBDIR_OVERRIDE) is compiled with EasyBuild's default
+-- optarch, which is -march=native or -mcpu=native for the build host.
+-- pushenv restores any value of $EASYBUILD_OPTARCH from before the load when the module is unloaded.
+eessi_software_subdir = os.getenv("EESSI_SOFTWARE_SUBDIR") or ""
+if (string.match(eessi_software_subdir, "/generic$") ~= nil) then
+  pushenv ("EASYBUILD_OPTARCH", "GENERIC")
+end
+
 -- Allow this module to be loaded when running EasyBuild
 setenv ("EASYBUILD_ALLOW_LOADED_MODULES", "EasyBuild,EESSI-extend")
 
