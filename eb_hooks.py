@@ -613,6 +613,24 @@ def parse_hook_fontconfig_add_fonts(ec, eprefix):
         raise EasyBuildError("fontconfig-specific hook triggered for non-fontconfig easyconfig?!")
 
 
+def parse_hook_perl_bundle_cpan_skip_crypt_urandom_test(ec, eprefix):
+    """Skip the test step of the Crypt::URandom extension in Perl-bundle-CPAN."""
+    # t/getrandom.t builds a test shared object with Perl's cccdlflags passed as a single argument. Under EESSI that
+    # string is "-fPIC --sysroot=<compat layer>", which gcc rejects as one unknown option, so the test fails while
+    # the module itself builds and loads. The module is not changed, only its test step is skipped.
+    if ec.name == 'Perl-bundle-CPAN':
+        target_list = ['5.42.0']
+        if ec.version in target_list:
+            for ext in ec['exts_list']:
+                if isinstance(ext, tuple) and len(ext) == 3 and ext[0] == 'Crypt::URandom':
+                    ext[2]['runtest'] = False
+                    print_msg("Skipping the test step of the Crypt::URandom extension in %s %s", ec.name, ec.version)
+        else:
+            print_warning("%s version %s not in target list %s, not applying hook", ec.name, ec.version, target_list)
+    else:
+        raise EasyBuildError("Perl-bundle-CPAN-specific hook triggered for a non-Perl-bundle-CPAN easyconfig?!")
+
+
 def parse_hook_grpcio_zlib(ec, ecprefix):
     """Adjust preinstallopts to use ZLIB from compat layer."""
     if ec.name == 'grpcio':
@@ -2521,6 +2539,7 @@ PARSE_HOOKS = {
     'fontconfig': parse_hook_fontconfig_add_fonts,
     'FreeImage': parse_hook_freeimage_aarch64,
     'grpcio': parse_hook_grpcio_zlib,
+    'Perl-bundle-CPAN': parse_hook_perl_bundle_cpan_skip_crypt_urandom_test,
     'maturin': parse_hook_maturin,
     'Mesa': parse_hook_mesa_use_llvm_minimal,
     'OpenBLAS': parse_hook_openblas_relax_lapack_tests_num_errors,
