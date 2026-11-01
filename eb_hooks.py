@@ -7,6 +7,7 @@ import json
 import os
 import re
 import socket
+import stat
 import tarfile
 from typing import NamedTuple
 
@@ -35,6 +36,7 @@ except ImportError:
     from distutils.version import LooseVersion
 
 
+# AARCH64 targets
 CPU_TARGET_NEOVERSE_N1 = 'aarch64/neoverse_n1'
 CPU_TARGET_NEOVERSE_V1 = 'aarch64/neoverse_v1'
 CPU_TARGET_AARCH64_GENERIC = 'aarch64/generic'
@@ -42,10 +44,16 @@ CPU_TARGET_A64FX = 'aarch64/a64fx'
 CPU_TARGET_NVIDIA_GRACE = 'aarch64/nvidia/grace'
 CPU_TARGET_AWS_GRAVITON4 = 'aarch64/aws/graviton4'
 
+# X86_64 targets
 CPU_TARGET_X86_64_GENERIC = 'x86_64/generic'
+CPU_TARGET_HASWELL = 'x86_64/intel/haswell'
 CPU_TARGET_CASCADELAKE = 'x86_64/intel/cascadelake'
 CPU_TARGET_ICELAKE = 'x86_64/intel/icelake'
 CPU_TARGET_SAPPHIRE_RAPIDS = 'x86_64/intel/sapphirerapids'
+CPU_TARGET_SKYLAKE_AVX512 = 'x86_64/intel/skylake_avx512'
+CPU_TARGET_GRANITE_RAPIDS = 'x86_64/intel/graniterapids'
+CPU_TARGET_ZEN2 = 'x86_64/amd/zen2'
+CPU_TARGET_ZEN3 = 'x86_64/amd/zen3'
 CPU_TARGET_ZEN4 = 'x86_64/amd/zen4'
 CPU_TARGET_ZEN5 = 'x86_64/amd/zen5'
 
@@ -1075,8 +1083,8 @@ def pre_prepare_hook_cudnn(self, *args, **kwargs):
     """
 
     if self.name == 'cuDNN':
-        # cuDNN 9.5.0.50 doesn't have support for 9.0a in all binaries
-        if self.version == "9.5.0.50":
+        # cuDNN 8.9.2.26 and 9.5.0.50 don't have support for 9.0a in all binaries
+        if self.version in ('8.9.2.26', '9.5.0.50'):
             cuda_cc = build_option('cuda_compute_capabilities')
             if cuda_cc and '9.0a' in cuda_cc:
                 updated_cuda_cc = [v.replace('9.0a', '9.0') for v in cuda_cc]
@@ -1154,6 +1162,28 @@ def pre_prepare_hook_llvm_a64fx(self, *args, **kwargs):
         if (self.name == 'LLVM' and self.version in ['14.0.6', '15.0.5']) or (self.name == 'Rust' and self.version == '1.65.0'):
             self.orig_optarch = build_option('optarch')
             update_build_option('optarch', 'march=armv8.2-a')
+
+
+def pre_prepare_hook_coordgenlibs_a64fx(self, *args, **kwargs):
+    """
+    Solve issues with compiling coordgenlibs on a64fx with the 2026.1 stack. The specific error is:
+    ```
+    immediate offset out of range 0 to 31 at operand 3 -- `st1b z30.d,p7,[z31.d,#40]'
+    ```
+    - https://github.com/EESSI/software-layer/pull/1829#issuecomment-6510125464
+    This was also observed previously with LLVM and Rust+LLVM builds on older stacks. See eg:
+    - https://github.com/EESSI/software-layer/issues/1213
+    - https://github.com/EESSI/software-layer/issues/1213
+    - https://github.com/EESSI/software-layer/pull/1177
+    """
+    if self.name == 'CoordgenLibs':
+        eessi_version = get_eessi_envvar('EESSI_VERSION')
+        cpu_target = get_eessi_envvar('EESSI_SOFTWARE_SUBDIR')
+        if eessi_version == '2026.06' and cpu_target == CPU_TARGET_A64FX:
+            self.orig_optarch = build_option('optarch')
+            update_build_option('optarch', '-march=armv8.2-a')
+    else:
+        raise EasyBuildError("CoordgenLibs-specific hook triggered for non-CoordgenLibs easyconfig?!")
 
 
 def pre_prepare_hook_pytorch(self, *args, **kwargs):
@@ -1278,10 +1308,26 @@ def post_prepare_hook_llvm_a64fx(self, *args, **kwargs):
             update_build_option('optarch', self.orig_optarch)
 
 
+def post_prepare_hook_coordgenlibs_a64fx(self, *args, **kwargs):
+    """
+    Reset the optarch build option for coordgenlibs on a64fx with the 2026.1 stack.
+    """
+    if self.name == 'CoordgenLibs':
+        eessi_version = get_eessi_envvar('EESSI_VERSION')
+        cpu_target = get_eessi_envvar('EESSI_SOFTWARE_SUBDIR')
+        if eessi_version == '2026.06' and cpu_target == CPU_TARGET_A64FX:
+            update_build_option('optarch', self.orig_optarch)
+    else:
+        raise EasyBuildError("CoordgenLibs-specific hook triggered for non-CoordgenLibs easyconfig?!")
+
+
 def pre_configure_hook(self, *args, **kwargs):
     """Main pre-configure hook: trigger custom functions based on software name."""
     if self.name in PRE_CONFIGURE_HOOKS:
         PRE_CONFIGURE_HOOKS[self.name](self, *args, **kwargs)
+
+    # Run this both for extensions and pure CargoPythonPackages installs
+    pre_cargo_python_package_2025(self, *args, **kwargs)
 
     # workaround for a Zlib macro being renamed in Gentoo, see https://bugs.gentoo.org/383179
     # (solves "expected initializer before 'OF'" errors)
@@ -2078,10 +2124,69 @@ def pre_test_hook_Siesta_ignore_failure_with_crosscompilation(self, *args, **kwa
                     self.cfg['testopts'] = re.sub(r"-E '(.*)'", rf"-E '\1|{extra_testopts}'", testopts)
 
 
+
+def pre_cargo_python_package_2025(self, *args, **kwargs):
+    """Ensure that Cargo builds in python packages use the correct cpu-target for the current EESSI CPU family.
+    Also mitigate the issue described in https://gitlab.com/eessi/support/-/work_items/270 where random
+    SIGSEGV 11 errors are seen in cargo builds."""
+    eessi_version = get_eessi_envvar('EESSI_VERSION')
+    if eessi_version != '2025.06':
+        return
+    from easybuild.easyblocks.generic.cargopythonpackage import CargoPythonPackage
+    rust_cpu_target_map = {
+        CPU_TARGET_HASWELL: 'haswell',
+    }
+    if isinstance(self, CargoPythonPackage):
+        print_msg(f"Running pre_cargo_python_package_2025 for {self.name} {self.version}")
+        cpu_target = get_eessi_envvar('EESSI_SOFTWARE_SUBDIR')
+        env_vars = {}
+        def set_env_var(var_name, var_value):
+            env.setvar(var_name, var_value)
+            env_vars[var_name] = var_value
+        if cpu_target in rust_cpu_target_map:
+            print_msg(
+                f"Setting RUSTFLAGS for Cargo build of {self.name} {self.version} to use cpu-target {cpu_target}"
+            )
+            rust_target = rust_cpu_target_map[cpu_target]
+            old_rustflags = os.getenv('RUSTFLAGS', '')
+            rustflags = old_rustflags
+            if '-C target-cpu=' not in rustflags:
+                rustflags += f' -C target-cpu={rust_target}'
+            else:
+                rustflags = re.sub(r'-C target-cpu=[^ "]+', f'-C target-cpu={rust_target}', rustflags)
+            set_env_var('RUSTFLAGS', rustflags)
+
+        self.cfg.update('installopts', '-Cbuild-args=--verbose')
+
+        if env_vars:
+            new_opts = [f"export {k}='{v}'" for k, v in env_vars.items()] + ['']
+            new_opts_str = ' && '.join(new_opts)
+            self.cfg['preinstallopts'] = new_opts_str + self.cfg.get('preinstallopts', '')
+
+        # On haswell with the 2025.06 EESSI release we have observed random SIGSEGV 11 errors in cargo builds
+        # here we add a preinstallopt to retry the build 10 times before failing, to mitigate this issue
+        # Other attempts like increasing the `RUST_MIN_STACK`, disabling LTO, or reducing the optimization level did 
+        # not fix the issue
+        if cpu_target == CPU_TARGET_HASWELL:
+            print_msg(
+                f"Adding retry() function to preinstallopts for Cargo build of {self.name} {self.version} "
+                f"on {cpu_target} to mitigate random SIGSEGV 11 errors"
+            )
+            self.cfg.update(
+                'preinstallopts',
+                'retry() { '
+                    'for i in $(seq 1 10); do "$@" && return 0 || echo "Retry $i failed, retrying..."; done; '
+                    'echo "All retries failed!"; return 1; '
+                '}; retry '
+            )
+
+
 def pre_single_extension_hook(ext, *args, **kwargs):
     """Main pre-extension: trigger custom functions based on software name."""
     if ext.name in PRE_SINGLE_EXTENSION_HOOKS:
         PRE_SINGLE_EXTENSION_HOOKS[ext.name](ext, *args, **kwargs)
+
+    pre_cargo_python_package_2025(ext, *args, **kwargs)
 
 
 def post_single_extension_hook(ext, *args, **kwargs):
@@ -2117,6 +2222,21 @@ def pre_single_extension_numpy(ext, *args, **kwargs):
         if cpu_target == CPU_TARGET_A64FX:
             ext.orig_optarch = build_option('optarch')
             update_build_option('optarch', 'march=armv8.2-a')
+
+
+def pre_single_extension_orjson(ext, *args, **kwargs):
+    """
+    Disable test prone to failing due to solar/legal timezone behavior in Etc/UTC on eessi container on Deucalion.
+    """
+    if ext.name == 'orjson':
+        # Disable UTC zoneinfo UTC test, as the behavior can be dependent on how 
+        # `localinfo`s are configured on the system
+        cpu_target = get_eessi_envvar('EESSI_SOFTWARE_SUBDIR')
+        # Make this specific to a64fx, since the problem was observed only there
+        if cpu_target == CPU_TARGET_A64FX:
+            runtest = ext.cfg.get('runtest', '')
+            if 'pytest' in runtest:
+                ext.cfg['runtest'] = runtest + ' -k "not test_datetime_zoneinfo_utc"'
 
 
 def pre_single_extension_hf_xet(ext, *args, **kwargs):
@@ -2271,6 +2391,85 @@ def post_postproc_cudnn(self, *args, **kwargs):
             print_msg(f"EESSI hook to respect cuDDN license not triggered for installation path {self.installdir}")
     else:
         raise EasyBuildError("cuDNN-specific hook triggered for non-cuDNN easyconfig?!")
+
+
+def post_proc_julia(self, *args, **kwargs):
+    """
+    Post-processing hook for Julia: add the `--cpu-target` option to the `julia` wrappers in order to ensure the
+    correct CPU target is used when running Julia, and to avoid issues with Julia's autodetection of the CPU target.
+    """
+    if self.name == 'Julia':
+        version = LooseVersion(self.version)
+
+        cpu_to_target_map = {}
+        if version >= '1.12':
+            cpu_to_target_map = {
+                **cpu_to_target_map,
+                # x86_64 targets
+                CPU_TARGET_X86_64_GENERIC: 'x86-64',
+                CPU_TARGET_HASWELL: 'haswell',
+                CPU_TARGET_CASCADELAKE: 'cascadelake',
+                CPU_TARGET_ICELAKE: 'icelake-client',
+                CPU_TARGET_SAPPHIRE_RAPIDS: 'sapphirerapids',
+                CPU_TARGET_SKYLAKE_AVX512: 'skylake-avx512',
+                CPU_TARGET_GRANITE_RAPIDS: 'graniterapids',
+                CPU_TARGET_ZEN2: 'znver2',
+                CPU_TARGET_ZEN3: 'znver3',
+                CPU_TARGET_ZEN4: 'znver4',
+                CPU_TARGET_ZEN5: 'znver4',  # Proper znver5 only available in Julia 1.13 and later, handled below
+
+                # ARM targets
+                CPU_TARGET_AARCH64_GENERIC: 'generic',
+                CPU_TARGET_NEOVERSE_N1: 'neoverse-n1',
+                CPU_TARGET_NEOVERSE_V1: 'neoverse-v1',
+                CPU_TARGET_A64FX: 'a64fx',
+                CPU_TARGET_NVIDIA_GRACE: 'neoverse-v2',
+                CPU_TARGET_AWS_GRAVITON4: 'neoverse-v2',
+            }
+        if version >= '1.13':
+            cpu_to_target_map = {
+                **cpu_to_target_map,
+                CPU_TARGET_ZEN5: 'znver5',
+            }
+
+        if not cpu_to_target_map:
+            print_warning(f"No CPU target mapping defined for Julia version {version}, skipping --cpu-target modification.")
+            return
+
+        cpu_target = get_eessi_envvar('EESSI_SOFTWARE_SUBDIR')
+        julia_target = cpu_to_target_map.get(cpu_target, None)
+        if julia_target:
+            wrapper_path = os.path.join(self.installdir, 'bin', 'julia')
+            if os.path.isfile(wrapper_path):
+                # Add the --cpu-target option to the Julia wrapper script
+                with open(wrapper_path, 'r') as f:
+                    content = f.read()
+                replace_str = 'julia.bin "$@"'
+                if '--cpu-target' in content:
+                    print_warning(
+                        f"Julia wrapper at {wrapper_path} already contains --cpu-target option, skipping modification. "
+                        f"Current content: {content}"
+                    )
+                elif replace_str not in content:
+                    raise EasyBuildError(f"Unexpected content in Julia wrapper at {wrapper_path}, cannot modify to add --cpu-target option.")
+                else:
+                    content = content.replace(replace_str, f'julia.bin --cpu-target={julia_target} "$@"')
+                    # Ensure file is writable and restore original permissions after writing
+                    original_permissions = os.stat(wrapper_path).st_mode
+                    os.chmod(wrapper_path, original_permissions | stat.S_IWUSR)
+                    with open(wrapper_path, 'w') as f:
+                        f.write(content)
+                    os.chmod(wrapper_path, original_permissions)
+                    print_msg(f"Added --cpu-target={julia_target} to Julia wrapper at {wrapper_path}")
+            else:
+                raise EasyBuildError(f"Julia wrapper not found at {wrapper_path}, cannot set CPU target.")
+        else:
+            raise EasyBuildError(
+                f"No Julia CPU target mapping found for EESSI CPU target '{cpu_target}'. "
+                "Please update the cpu_to_target_map in the `post_proc_julia` hook to include this mapping."
+            )
+    else:
+        raise EasyBuildError("Julia-specific post-processing hook triggered for non-Julia easyconfig?!")
 
 
 def replace_binary_non_distributable_files_with_symlinks(log, install_dir, pkg_name, allowlist):
@@ -2537,12 +2736,14 @@ PRE_PREPARE_HOOKS = {
     'Highway': pre_prepare_hook_highway_handle_test_compilation_issues,
     'LAMMPS': pre_prepare_hook_LAMMPS_kokkos_CUDA_families,
     'LLVM': pre_prepare_hook_llvm_a64fx,
+    'CoordgenLibs': pre_prepare_hook_coordgenlibs_a64fx,
     'PyTorch': pre_prepare_hook_pytorch,
     'Rust': pre_prepare_hook_llvm_a64fx,
     'uv': pre_prepare_hook_uv_source_date_epoch,
 }
 
 POST_PREPARE_HOOKS = {
+    'CoordgenLibs': post_prepare_hook_coordgenlibs_a64fx,
     'GCCcore': post_prepare_hook_gcc_prefixed_ld_rpath_wrapper,
     'Highway': post_prepare_hook_highway_handle_test_compilation_issues,
     'LLVM': post_prepare_hook_llvm_a64fx,
@@ -2594,6 +2795,7 @@ PRE_TEST_HOOKS = {
 PRE_SINGLE_EXTENSION_HOOKS = {
     'isoband': pre_single_extension_isoband,
     'numpy': pre_single_extension_numpy,
+    'orjson': pre_single_extension_orjson,
     'testthat': pre_single_extension_testthat,
     'hf_xet': pre_single_extension_hf_xet,
     'hf-xet': pre_single_extension_hf_xet,
@@ -2606,6 +2808,7 @@ POST_SINGLE_EXTENSION_HOOKS = {
 POST_POSTPROC_HOOKS = {
     'CUDA': post_postproc_cuda,
     'cuDNN': post_postproc_cudnn,
+    'Julia': post_proc_julia,
 }
 
 PRE_MODULE_HOOKS = {}
