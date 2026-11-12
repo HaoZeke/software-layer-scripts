@@ -286,6 +286,8 @@ if eessi_original_module_path_accel then
         eessi_module_path_site_accel = string.gsub(eessi_original_module_path_accel, "versions", "host_injections")
     end
     if isDir(eessi_module_path_site_accel) then
+        eessi_module_path_site_accel = module_view("EESSI_SITE_MODULEPATH_ACCEL_OVERRIDE",
+            eessi_module_path_site_accel, eessi_accel_software_subdir, archdetect_accel, "site accelerator")
         setenv("EESSI_SITE_MODULEPATH_ACCEL", eessi_module_path_site_accel)
         prepend_path("MODULEPATH", eessi_module_path_site_accel)
         eessiDebug("Using site accelerator modules at: " .. eessi_module_path_site_accel)
