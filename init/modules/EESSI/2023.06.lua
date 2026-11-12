@@ -162,6 +162,22 @@ end
 -- Site module path is the same as the EESSI one, but with `versions` changed to `host_injections`, e.g.,
 --  /cvmfs/software.eessi.io/host_injections/<EESSI_VERSION>/software/linux/x86_64/amd/zen3/modules/all
 local eessi_site_module_path = pathJoin(eessi_site_software_path, eessi_modules_subdir)
+-- A site module view can filter provider entries without moving software installations.
+local site_module_override = os.getenv("EESSI_SITE_MODULEPATH_OVERRIDE")
+if site_module_override then
+    local expected_suffix = "/" .. pathJoin("versions", eessi_version, "software", eessi_os_type,
+                                            eessi_software_subdir, eessi_modules_subdir)
+    if site_module_override:sub(1, 1) ~= "/" or
+       site_module_override:find("/../", 1, true) or
+       site_module_override:find("/./", 1, true) or
+       site_module_override:find("[:%c]") or
+       site_module_override:sub(-#expected_suffix) ~= expected_suffix or
+       site_module_override:sub(1, #eessi_repo) == eessi_repo or
+       not isDir(site_module_override) then
+        LmodError("EESSI_SITE_MODULEPATH_OVERRIDE must name an existing site CPU module view for this release and target")
+    end
+    eessi_site_module_path = site_module_override
+end
 setenv("EPREFIX",  eessi_eprefix)
 eessiDebug("Setting EPREFIX to " .. eessi_eprefix)
 setenv("EESSI_CPU_FAMILY", eessi_cpu_family)
