@@ -234,6 +234,7 @@ eessiDebug("Adding " .. pathJoin(eessi_site_software_path , ".lmod", "lmodrc.lua
 pushenv("LMOD_PACKAGE_PATH", pathJoin(eessi_software_path, ".lmod"))
 eessiDebug("Setting LMOD_PACKAGE_PATH to " .. pathJoin(eessi_software_path, ".lmod"))
 
+local eessi_original_module_path_accel
 -- the accelerator may have an empty value and we need to give some flexibility
 -- * construct the path we expect to find
 -- * then check it exists
