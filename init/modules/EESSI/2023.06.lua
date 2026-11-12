@@ -162,30 +162,35 @@ end
 -- Site module path is the same as the EESSI one, but with `versions` changed to `host_injections`, e.g.,
 --  /cvmfs/software.eessi.io/host_injections/<EESSI_VERSION>/software/linux/x86_64/amd/zen3/modules/all
 local eessi_site_module_path = pathJoin(eessi_site_software_path, eessi_modules_subdir)
--- A site module view can filter provider entries without moving software installations.
-local site_module_override = os.getenv("EESSI_SITE_MODULEPATH_OVERRIDE")
-if site_module_override then
-    local _, token_count = site_module_override:gsub("@EESSI_SOFTWARE_SUBDIR@", "")
-    if token_count > 1 then
-        LmodError("EESSI_SITE_MODULEPATH_OVERRIDE accepts one CPU subdirectory token")
+-- Module views change discovery paths while installation prefixes stay fixed.
+local function module_view(variable, default_path, cpu_subdir, accelerator_subdir, kind)
+    local override = os.getenv(variable)
+    if not override then return default_path end
+    local _, cpu_count = override:gsub("@EESSI_SOFTWARE_SUBDIR@", "")
+    local _, accel_count = override:gsub("@EESSI_ACCELERATOR_TARGET@", "")
+    if cpu_count > 1 or accel_count > 1 or (accel_count > 0 and not accelerator_subdir) then
+        LmodError(variable .. " accepts one CPU and one applicable accelerator subdirectory token")
     end
-    site_module_override = site_module_override:gsub("@EESSI_SOFTWARE_SUBDIR@", function()
-        return eessi_software_subdir
-    end, 1)
-    local expected_suffix = "/" .. pathJoin("versions", eessi_version, "software", eessi_os_type,
-                                            eessi_software_subdir, eessi_modules_subdir)
-    if site_module_override:sub(1, 1) ~= "/" or
-       site_module_override:find("/../", 1, true) or
-       site_module_override:find("/./", 1, true) or
-       site_module_override:find("[:%c]") or
-       site_module_override:find("[@${}%%]") or
-       site_module_override:sub(-#expected_suffix) ~= expected_suffix or
-       site_module_override:sub(1, #eessi_repo) == eessi_repo or
-       not isDir(site_module_override) then
-        LmodError("EESSI_SITE_MODULEPATH_OVERRIDE must name an existing site CPU module view for this release and target")
+    override = override:gsub("@EESSI_SOFTWARE_SUBDIR@", function() return cpu_subdir end, 1)
+    if accelerator_subdir then
+        override = override:gsub("@EESSI_ACCELERATOR_TARGET@", function() return accelerator_subdir end, 1)
     end
-    eessi_site_module_path = site_module_override
+    local suffix = pathJoin("versions", eessi_version, "software", eessi_os_type, cpu_subdir)
+    if accelerator_subdir then suffix = pathJoin(suffix, accelerator_subdir) end
+    suffix = "/" .. pathJoin(suffix, eessi_modules_subdir)
+    if override:sub(1, 1) ~= "/" or
+       override:find("/../", 1, true) or override:find("/./", 1, true) or
+       override:find("[:%c]") or override:find("[${}%%]") or
+       override:sub(-#suffix) ~= suffix or override:sub(1, #eessi_repo) == eessi_repo or
+       not isDir(override) then
+        LmodError(variable .. " must name an existing " .. kind .. " module view for this release and target")
+    end
+    return override
 end
+eessi_site_module_path = module_view("EESSI_SITE_MODULEPATH_OVERRIDE", eessi_site_module_path,
+                                    eessi_software_subdir, nil, "site CPU")
+eessi_module_path = module_view("EESSI_MODULEPATH_OVERRIDE", eessi_module_path,
+                               eessi_software_subdir, nil, "base CPU")
 setenv("EPREFIX",  eessi_eprefix)
 eessiDebug("Setting EPREFIX to " .. eessi_eprefix)
 setenv("EESSI_CPU_FAMILY", eessi_cpu_family)
@@ -253,6 +258,9 @@ if not (archdetect_accel == nil or archdetect_accel == '') then
     if isDir(eessi_module_path_accel) then
         -- set the accelerator target based on what actually exists
         setenv("EESSI_ACCELERATOR_TARGET", archdetect_accel)
+        eessi_original_module_path_accel = eessi_module_path_accel
+        eessi_module_path_accel = module_view("EESSI_MODULEPATH_ACCEL_OVERRIDE", eessi_module_path_accel,
+                                             eessi_accel_software_subdir, archdetect_accel, "base accelerator")
         setenv("EESSI_MODULEPATH_ACCEL", eessi_module_path_accel)
         if ( mode() ~= "spider" ) then
             prepend_path("MODULEPATH", eessi_module_path_accel)
@@ -270,11 +278,11 @@ eessiDebug("Adding " .. eessi_site_module_path .. " to MODULEPATH")
 -- os/vendor/arch/micro-arch/accelerator etc. If it is not defined, default to a site installation prefix under
 -- host_injections
 -- Note that we need the eessi_module_path_accel to construct either of these site installation accelerator paths
-if eessi_module_path_accel then
+if eessi_original_module_path_accel then
     if site_prefix then
-        eessi_module_path_site_accel = string.gsub(eessi_module_path_accel, eessi_repo, site_prefix)
+        eessi_module_path_site_accel = string.gsub(eessi_original_module_path_accel, eessi_repo, site_prefix)
     else
-        eessi_module_path_site_accel = string.gsub(eessi_module_path_accel, "versions", "host_injections")
+        eessi_module_path_site_accel = string.gsub(eessi_original_module_path_accel, "versions", "host_injections")
     end
     if isDir(eessi_module_path_site_accel) then
         setenv("EESSI_SITE_MODULEPATH_ACCEL", eessi_module_path_site_accel)
