@@ -74,7 +74,17 @@ end
 function archdetect_cpu()
     local script = pathJoin(eessi_init_prefix, 'lmod_eessi_archdetect_wrapper.sh')
     -- make sure that we grab the value for architecture before the module unsets the environment variable (in unload mode)
-    local archdetect_options = os.getenv("EESSI_ARCHDETECT_OPTIONS") or (os.getenv("EESSI_ARCHDETECT_OPTIONS_OVERRIDE") or "")
+    local retained_subdir
+    if mode() == "unload" then
+        local loaded_subdir = os.getenv("EESSI_SOFTWARE_SUBDIR")
+        local loaded_path = os.getenv("EESSI_SOFTWARE_PATH")
+        if loaded_subdir and loaded_subdir:match("^[%w_/-]+$") and
+           loaded_path == pathJoin(eessi_prefix, "software", eessi_os_type, loaded_subdir) then
+            retained_subdir = loaded_subdir
+        end
+    end
+    local archdetect_options = os.getenv("EESSI_ARCHDETECT_OPTIONS") or
+        os.getenv("EESSI_ARCHDETECT_OPTIONS_OVERRIDE") or retained_subdir or ""
     if not os.getenv("EESSI_ARCHDETECT_OPTIONS_OVERRIDE") then
         if convertToCanonical(LmodVersion()) < convertToCanonical("8.6") then
             LmodError("Loading this modulefile requires using Lmod version >= 8.6, but you can export EESSI_ARCHDETECT_OPTIONS_OVERRIDE to the available cpu architecture in the form of: x86_64/intel/haswell:x86_64/generic or aarch64/neoverse_v1:aarch64/generic")
