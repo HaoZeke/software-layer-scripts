@@ -113,8 +113,31 @@ function archdetect_cpu()
 end
 function archdetect_accel()
     local script = pathJoin(eessi_init_prefix, 'lmod_eessi_archdetect_wrapper_accel.sh')
-    -- for unload mode, we need to grab the value before it is unset
-    local archdetect_accel = os.getenv("EESSI_ACCEL_SUBDIR") or (os.getenv("EESSI_ACCELERATOR_TARGET_OVERRIDE") or "")
+    -- Unload follows the target named by the loaded accelerator module path.
+    local retained_accel
+    if mode() == "unload" then
+        local cpu = os.getenv("EESSI_SOFTWARE_SUBDIR")
+        local software = os.getenv("EESSI_SOFTWARE_PATH")
+        local target = os.getenv("EESSI_ACCELERATOR_TARGET")
+        local loaded_modules = os.getenv("EESSI_MODULEPATH_ACCEL")
+        local accel_cpu = os.getenv("EESSI_ACCEL_SOFTWARE_SUBDIR_OVERRIDE") or cpu
+        if cpu and cpu:match("^[%w_/-]+$") and accel_cpu and accel_cpu:match("^[%w_/-]+$") and
+           target and target:match("^accel/[%w_/-]+$") and
+           software == pathJoin(eessi_prefix, "software", eessi_os_type, cpu) then
+            local expected = pathJoin(eessi_prefix, "software", eessi_os_type,
+                                      accel_cpu, target, "modules", "all")
+            local template = os.getenv("EESSI_MODULEPATH_ACCEL_OVERRIDE")
+            if template then
+                expected = template:gsub("@EESSI_SOFTWARE_SUBDIR@", function() return accel_cpu end, 1)
+                expected = expected:gsub("@EESSI_ACCELERATOR_TARGET@", function() return target end, 1)
+            end
+            if not expected:find("@") and loaded_modules == expected then
+                retained_accel = target
+            end
+        end
+    end
+    local archdetect_accel = os.getenv("EESSI_ACCEL_SUBDIR") or
+        os.getenv("EESSI_ACCELERATOR_TARGET_OVERRIDE") or retained_accel or ""
     if not os.getenv("EESSI_ACCELERATOR_TARGET_OVERRIDE") then
         if convertToCanonical(LmodVersion()) < convertToCanonical("8.6") then
             LmodError("Loading this modulefile requires using Lmod version >= 8.6, but you can export EESSI_ACCELERATOR_TARGET_OVERRIDE to the available accelerator architecture in the form of: accel/nvidia/cc80")
@@ -124,7 +147,11 @@ function archdetect_accel()
     else
         setenv("EESSI_ACCEL_SUBDIR", os.getenv("EESSI_ACCELERATOR_TARGET_OVERRIDE"))
     end
-    archdetect_accel = os.getenv("EESSI_ACCEL_SUBDIR") or archdetect_accel
+    if retained_accel then
+        archdetect_accel = retained_accel
+    else
+        archdetect_accel = os.getenv("EESSI_ACCEL_SUBDIR") or archdetect_accel
+    end
     eessiDebug("Got archdetect accel option: " .. archdetect_accel)
     return archdetect_accel
 end
