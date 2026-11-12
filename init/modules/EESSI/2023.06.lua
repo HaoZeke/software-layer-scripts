@@ -165,12 +165,20 @@ local eessi_site_module_path = pathJoin(eessi_site_software_path, eessi_modules_
 -- A site module view can filter provider entries without moving software installations.
 local site_module_override = os.getenv("EESSI_SITE_MODULEPATH_OVERRIDE")
 if site_module_override then
+    local _, token_count = site_module_override:gsub("@EESSI_SOFTWARE_SUBDIR@", "")
+    if token_count > 1 then
+        LmodError("EESSI_SITE_MODULEPATH_OVERRIDE accepts one CPU subdirectory token")
+    end
+    site_module_override = site_module_override:gsub("@EESSI_SOFTWARE_SUBDIR@", function()
+        return eessi_software_subdir
+    end, 1)
     local expected_suffix = "/" .. pathJoin("versions", eessi_version, "software", eessi_os_type,
                                             eessi_software_subdir, eessi_modules_subdir)
     if site_module_override:sub(1, 1) ~= "/" or
        site_module_override:find("/../", 1, true) or
        site_module_override:find("/./", 1, true) or
        site_module_override:find("[:%c]") or
+       site_module_override:find("[@${}%%]") or
        site_module_override:sub(-#expected_suffix) ~= expected_suffix or
        site_module_override:sub(1, #eessi_repo) == eessi_repo or
        not isDir(site_module_override) then
