@@ -179,8 +179,9 @@ if [ -d "$EESSI_PREFIX" ]; then
           # hook (or via an Lmod hook)
           rhel_libcurl_file="/etc/pki/tls/certs/ca-bundle.crt"
           if [ -f "$rhel_libcurl_file" ]; then
-            show_msg "Found libcurl CAs file at RHEL location, setting CURL_CA_BUNDLE"
+            show_msg "Found libcurl CAs file at RHEL location, setting CURL_CA_BUNDLE,CARGO_HTTP_CAINFO"
             export CURL_CA_BUNDLE="$rhel_libcurl_file"
+            export CARGO_HTTP_CAINFO="$rhel_libcurl_file"
           fi
 
         else

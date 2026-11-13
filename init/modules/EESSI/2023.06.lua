@@ -287,7 +287,8 @@ if isFile(ca_bundle_file_rhel) then
     pushenv("CURL_CA_BUNDLE", ca_bundle_file_rhel)
     pushenv("REQUESTS_CA_BUNDLE", ca_bundle_file_rhel)
     pushenv("SSL_CERT_FILE", ca_bundle_file_rhel)
-    eessiDebug("Setting CURL_CA_BUNDLE,REQUESTS_CA_BUNDLE,SSL_CERT_FILE to " .. ca_bundle_file_rhel)
+    pushenv("CARGO_HTTP_CAINFO", ca_bundle_file_rhel)
+    eessiDebug("Setting CURL_CA_BUNDLE,REQUESTS_CA_BUNDLE,SSL_CERT_FILE,CARGO_HTTP_CAINFO to " .. ca_bundle_file_rhel)
 end
 
 if mode() == "load" then
